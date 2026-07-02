@@ -91,19 +91,6 @@ def main():
     filepath = download_dataset()
     messages, labels = load_data(filepath)
     
-    # Check for user reported feedback data and merge it
-    feedback_path = os.path.join("data", "feedback.tsv")
-    if os.path.exists(feedback_path):
-        print(f"\nFeedback file found: {feedback_path}")
-        try:
-            fb_messages, fb_labels = load_data(feedback_path)
-            fb_count = len(fb_messages)
-            if fb_count > 0:
-                print(f"Merging {fb_count} user-reported feedback samples into training set...")
-                messages.extend(fb_messages)
-                labels.extend(fb_labels)
-        except Exception as e:
-            print(f"Warning: Failed to load feedback data: {str(e)}")
     total_samples = len(messages)
     spam_count = sum(1 for l in labels if l == "spam")
     ham_count = sum(1 for l in labels if l == "ham")

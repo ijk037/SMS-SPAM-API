@@ -3,14 +3,9 @@ import json
 import sys
 import importlib
 
-# Ensure current directory is in python path
-sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
-
 # Ensure console supports UTF-8 characters on Windows
 if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8')
-
-HEADERS = {"X-API-Key": "demo-key-123"}
 
 def run_tests_for_version(version):
     print(f"\n==================================================")
@@ -36,7 +31,7 @@ def run_tests_for_version(version):
     
     # 2. Test Metadata
     print("\nTesting GET /model-metadata...")
-    response = client.get("/model-metadata", headers=HEADERS)
+    response = client.get("/model-metadata")
     assert response.status_code == 200
     metadata_data = json.loads(response.data)
     print("Metadata response:", json.dumps(metadata_data, indent=2))
@@ -60,7 +55,6 @@ def run_tests_for_version(version):
         print(f"Predicting for message: '{case['message']}'")
         response = client.post("/predict", 
                                data=json.dumps({"message": case["message"]}),
-                               headers=HEADERS,
                                content_type="application/json")
         assert response.status_code == 200
         pred_data = json.loads(response.data)
@@ -70,63 +64,6 @@ def run_tests_for_version(version):
         print("Sub-test passed! ✅")
         
     print(f"POST /predict passed for {version}! ✅")
-
-def test_feedback():
-    import app
-    client = app.app.test_client()
-    print("\nTesting POST /feedback...")
-    response = client.post("/feedback",
-                           data=json.dumps({
-                               "message": "This is a reported spam message",
-                               "reported_label": "spam"
-                           }),
-                           headers=HEADERS,
-                           content_type="application/json")
-    assert response.status_code == 200
-    data = json.loads(response.data)
-    assert data["status"] == "success"
-    print("POST /feedback passed! ✅")
-
-def test_unauthorized():
-    import app
-    client = app.app.test_client()
-    print("\nTesting API Key Authorization Security...")
-    # Test missing key
-    response = client.get("/model-metadata")
-    assert response.status_code == 401
-    
-    # Test invalid key
-    response = client.post("/predict",
-                           data=json.dumps({"message": "Hello"}),
-                           headers={"X-API-Key": "wrong-key"},
-                           content_type="application/json")
-    assert response.status_code == 401
-    print("Authentication checks passed! ✅")
-
-def test_rate_limiting():
-    import app
-    client = app.app.test_client()
-    print("\nTesting Rate Limiting Security...")
-    # Reset records to guarantee exactly 15 requests before lockout
-    app.rate_limit_records.clear()
-    
-    # Since our limit is set to 15, let's fire 15 requests, which should succeed.
-    for i in range(15):
-        response = client.post("/predict",
-                               data=json.dumps({"message": f"Test message {i}"}),
-                               headers=HEADERS,
-                               content_type="application/json")
-        assert response.status_code == 200
-
-    # The 16th request should fail with 429 Too Many Requests
-    response = client.post("/predict",
-                           data=json.dumps({"message": "Rate limited request"}),
-                           headers=HEADERS,
-                           content_type="application/json")
-    assert response.status_code == 429
-    data = json.loads(response.data)
-    assert "Rate limit exceeded" in data["error"]
-    print("Rate limiting checks passed! ✅")
 
 if __name__ == "__main__":
     versions = ["v1", "v2", "v3"]
@@ -143,17 +80,10 @@ if __name__ == "__main__":
             success = False
             
     if success:
-        try:
-            test_feedback()
-            test_unauthorized()
-            test_rate_limiting()
-            print("\n🎉 All tests for ALL model versions (v1, v2, v3) & security gates passed successfully! 🚀")
-            if "MODEL_VERSION" in os.environ:
-                del os.environ["MODEL_VERSION"]
-            sys.exit(0)
-        except AssertionError as e:
-            print("\n❌ Security test assertion failed:", e)
-            sys.exit(1)
+        print("\n🎉 All tests for ALL model versions (v1, v2, v3) passed successfully! 🚀")
+        if "MODEL_VERSION" in os.environ:
+            del os.environ["MODEL_VERSION"]
+        sys.exit(0)
     else:
-        print("\n❌ Some functional tests failed.")
+        print("\n❌ Some tests failed.")
         sys.exit(1)
