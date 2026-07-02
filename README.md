@@ -57,116 +57,28 @@ If you prefer running the application inside a container, you can build and run 
 ## API Endpoints
 
 ### `GET /`
-- **Browser Output**: Renders the HTML Web Dashboard.
-- **API Output** (requests with headers `Accept: application/json`):
-  ```json
-  {
-    "active_model_version": "v2",
-    "status": "SMS Spam API is running ✅"
-  }
-  ```
-
-### `GET /model-metadata`
-Retrieve active model metrics, classifier type, features count, and preprocessing flags.
-- **Optional Query Parameter**: `version` (e.g. `/model-metadata?version=v1`) to inspect a specific cached model version.
-- **Response**:
-  ```json
-  {
-    "active_version": "v2",
-    "features_supported": {
-      "email_handling": true,
-      "money_handling": true,
-      "phone_handling": true,
-      "promo_code_handling": true,
-      "robust_preprocessing_v2": true,
-      "url_handling": true
-    },
-    "model_type": "RandomForestClassifier",
-    "num_features": 3000,
-    "vectorizer_type": "TfidfVectorizer"
-  }
-  ```
+Health check.
 
 ### `POST /predict`
-Classify an SMS message.
-- **Request Body**:
-  ```json
-  { 
-    "message": "URGENT! Call 09061701461 to claim your GBP1000 prize now!",
-    "model_version": "v2" 
-  }
-  ```
-- **Response**:
-  ```json
-  {
-    "message": "URGENT! Call 09061701461 to claim your GBP1000 prize now!",
-    "processed_message": "urgent call __phone__ claim gbp1000 prize",
-    "prediction": "spam",
-    "confidence": "90.0%",
-    "is_spam": true,
-    "model_version": "v2",
-    "explanations": [
-      { "word": "urgent", "spam_score": 0.45 },
-      { "word": "__phone__", "spam_score": 0.28 },
-      { "word": "claim", "spam_score": 0.12 },
-      { "word": "call", "spam_score": 0.05 }
-    ]
-  }
-  ```
+Classify a message.
 
-### `POST /feedback`
-Submit user feedback for misclassified messages.
-- **Request Body**:
-  ```json
-  {
-    "message": "This is a reported spam message",
-    "reported_label": "spam"
-  }
-  ```
-- **Response**:
-  ```json
-  {
-    "status": "success",
-    "message": "Feedback saved successfully"
-  }
-  ```
-- **Behavior**: Appends the raw reported sample to `data/feedback.tsv` which will be automatically merged into the training dataset during the next model retraining cycle.
-
----
-
-## API Security & Rate Limiting
-
-To simulate a production-grade SaaS API, security features are built-in:
-
-### 1. API Key Authentication
-- Protected endpoints (`/predict`, `/feedback`, `/model-metadata`) require a valid API key.
-- Provide the key using either:
-  - Header: `X-API-Key: <your-key>`
-  - Query Parameter: `?api_key=<your-key>`
-  - JSON Body key: `"api_key": "<your-key>"`
-- Valid local keys: `demo-key-123` (default in Dashboard) and `sms-shield-secure-key-2026`.
-
-### 2. Rate Limiting
-- Requests to protected API endpoints are limited to **15 requests per minute per IP address**.
-- Exceeding this limit returns a `429 Too Many Requests` status code.
-- Visited directly in the browser, the main HTML page rendering (`GET /`) is exempted to prevent lockouts.
-
----
-
-## Model Training & Versioning
-
-To retrain the model and test multiple classifiers:
-```bash
-python train.py
+**Request:**
+```json
+{ "message": "You won a FREE prize! Click now!" }
 ```
-This script will:
-1. Download the UCI SMS Spam Collection dataset.
-2. Apply **Robust Preprocessing v2** (capturing emails, phone numbers, URLs, currency, and promo codes).
-3. Evaluate and compare **Multinomial Naive Bayes**, **Logistic Regression**, and **Random Forest**.
-4. Automatically save the best performing model (based on Spam F1-Score) to `models/v2/`.
 
-### Switching Default Version
-By default, the API automatically loads the latest model version found under `models/` (e.g., `v2`). You can lock the server's default startup version using the `MODEL_VERSION` environment variable:
+**Response:**
+```json
+{
+  "message": "You won a FREE prize! Click now!",
+  "prediction": "spam",
+  "confidence": "97.3%",
+  "is_spam": true
+}
+```
+
+## Run locally
+
 ```bash
 # On Windows PowerShell
 $env:MODEL_VERSION="v1"
@@ -181,16 +93,20 @@ MODEL_VERSION=v1 python app.py
 ## Running Tests
 Run the API integration tests:
 ```bash
-python test_app.py
+curl -X POST http://localhost:5000/predict \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Claim your free prize now!"}'
 ```
 
----
+## Deploy to Render
+
+1. Push this repo to GitHub
+2. Go to [render.com](https://render.com) → New Web Service
+3. Connect your GitHub repo
+4. Set **Start Command**: `gunicorn app:app`
+5. Deploy — you'll get a public URL
 
 ## Tech Stack
-- **Backend**: Python, Flask, scikit-learn, NLTK
-- **Frontend**: HTML5, Vanilla CSS3 (Custom Glassmorphism theme, dynamic animated components), Javascript (Async fetch)
-- **Active Model (v2)**: Random Forest Classifier
-- **Baseline Model (v1)**: Logistic Regression
-- **Vectorizer**: TF-IDF Vectorizer (3000 features)
-
-
+- Python, Flask, scikit-learn, NLTK
+- Model: Logistic Regression
+- Vectorizer: TF-IDF (3000 features)

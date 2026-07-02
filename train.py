@@ -104,7 +104,6 @@ def main():
                 labels.extend(fb_labels)
         except Exception as e:
             print(f"Warning: Failed to load feedback data: {str(e)}")
-    
     total_samples = len(messages)
     spam_count = sum(1 for l in labels if l == "spam")
     ham_count = sum(1 for l in labels if l == "ham")
