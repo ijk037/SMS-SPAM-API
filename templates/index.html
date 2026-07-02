@@ -794,6 +794,7 @@
         <nav class="tabs">
             <button class="tab-btn active" onclick="switchTab('single-mode')">Single Prediction</button>
             <button class="tab-btn" onclick="switchTab('compare-mode')">Compare Models</button>
+            <button class="tab-btn" onclick="switchTab('admin-mode')">Admin Console</button>
         </nav>
 
         <!-- Tab 1: Single Prediction Mode -->
@@ -909,6 +910,57 @@
                     <div id="v2-compare-card" class="compare-result-card">
                         <span style="color: var(--text-muted);">Awaiting analysis...</span>
                     </div>
+                </div>
+        </div>
+
+        <!-- Tab 3: Admin Console Mode -->
+        <div id="admin-mode" class="tab-content">
+            <div class="dashboard-grid">
+                <!-- Retraining Card -->
+                <div class="card">
+                    <h3 class="card-title">
+                        <svg viewBox="0 0 24 24" style="width:20px; height:20px; fill:var(--accent-color); margin-right:8px;"><path d="M12 6v3l4-4-4-4v3c-4.42 0-8 3.58-8 8 0 1.57.46 3.03 1.24 4.26l1.42-1.42C6.27 13.03 6 12.54 6 12c0-3.31 2.69-6 6-6zm6.76 1.74l-1.42 1.42C17.73 10.97 18 11.46 18 12c0 3.31-2.69 6-6 6v-3l-4 4 4 4v-3c4.42 0 8-3.58 8-8 0-1.57-.46-3.03-1.24-4.26z"/></svg>
+                        Model Retraining Engine
+                    </h3>
+                    <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 15px; line-height: 1.5;">
+                        Trigger a background retraining pipeline that reads the baseline datasets, merges all user corrections from <code>feedback.tsv</code>, applies spelling normalizations, evaluates Multinomial Naive Bayes, Logistic Regression, Random Forest, and a new Voting Ensemble, and updates the active model parameters dynamically.
+                    </p>
+                    <button id="retrain-btn" class="submit-btn" onclick="triggerRetraining()">
+                        <span id="retrain-btn-spinner" class="spinner" style="display: none; border: 2px solid rgba(255,255,255,0.1); border-top: 2px solid var(--text-color); width: 14px; height: 14px; margin-right: 8px;"></span>
+                        <span id="retrain-btn-text">Retrain Production Models 🚀</span>
+                    </button>
+                    <div id="retrain-status-box" style="margin-top: 15px; padding: 10px; border-radius: var(--border-radius); background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); font-size: 12px; display: none;"></div>
+                </div>
+
+                <!-- Feedback Stats Card -->
+                <div class="card">
+                    <h3 class="card-title">
+                        <svg viewBox="0 0 24 24" style="width:20px; height:20px; fill:var(--accent-color); margin-right:8px;"><path d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 9h12v2H6V9zm8 5H6v-2h8v2zm4-6H6V6h12v2z"/></svg>
+                        Feedback Database & Reports
+                    </h3>
+                    <div style="display: flex; gap: 15px; margin-bottom: 15px;">
+                        <div class="details-box" style="flex: 1; text-align: center; padding: 12px; background: rgba(255,255,255,0.01);">
+                            <div class="details-title" style="font-size: 10px;">Total Reports</div>
+                            <div id="admin-total-reports" style="font-size: 20px; font-weight: 700; color: var(--accent-color); margin-top: 4px;">0</div>
+                        </div>
+                        <div class="details-box" style="flex: 1; text-align: center; padding: 12px; background: rgba(255,255,255,0.01);">
+                            <div class="details-title" style="font-size: 10px;">Spam Corrections</div>
+                            <div id="admin-spam-reports" style="font-size: 20px; font-weight: 700; color: var(--spam-color); margin-top: 4px;">0</div>
+                        </div>
+                        <div class="details-box" style="flex: 1; text-align: center; padding: 12px; background: rgba(255,255,255,0.01);">
+                            <div class="details-title" style="font-size: 10px;">Ham Corrections</div>
+                            <div id="admin-ham-reports" style="font-size: 20px; font-weight: 700; color: var(--ham-color); margin-top: 4px;">0</div>
+                        </div>
+                    </div>
+                    <div class="details-box" style="padding: 10px; max-height: 200px; overflow-y: auto; background: rgba(255,255,255,0.01);">
+                        <div class="details-title" style="font-size: 9px; margin-bottom: 6px;">Recent User Reported Samples</div>
+                        <div id="admin-reports-list" style="font-size: 11px; display: flex; flex-direction: column; gap: 6px;">
+                            <i style="color: var(--text-muted)">Click refresh to load submissions...</i>
+                        </div>
+                    </div>
+                    <button class="submit-btn" style="margin-top: 10px; background: transparent; border: 1px solid var(--border-color); color: var(--text-color);" onclick="fetchAdminStats()">
+                        Refresh Database Stats 🔄
+                    </button>
                 </div>
             </div>
         </div>
@@ -1315,6 +1367,101 @@
                 ${miniExplanationsHtml}
             `;
         }
+
+        // Trigger asynchronous model retraining
+        async function triggerRetraining() {
+            const apiKey = document.getElementById('api-key-input').value.trim();
+            const btn = document.getElementById('retrain-btn');
+            const spinner = document.getElementById('retrain-btn-spinner');
+            const btnText = document.getElementById('retrain-btn-text');
+            const statusBox = document.getElementById('retrain-status-box');
+
+            btn.disabled = true;
+            spinner.style.display = 'inline-block';
+            btnText.textContent = 'Retraining Pipeline Initiated...';
+            statusBox.style.display = 'block';
+            statusBox.innerHTML = `<span style="color: var(--accent-color)">Triggering backend trainer...</span>`;
+
+            try {
+                const response = await fetch('/retrain?api_key=' + encodeURIComponent(apiKey), {
+                    method: 'POST'
+                });
+
+                if (!response.ok) {
+                    if (response.status === 401) {
+                        throw new Error("Unauthorized: Invalid API Key.");
+                    } else if (response.status === 429) {
+                        throw new Error("Rate limit exceeded. Please wait a moment.");
+                    }
+                    throw new Error("Retraining request failed: " + response.status);
+                }
+
+                const data = await response.json();
+                statusBox.innerHTML = `
+                    <span style="color: var(--ham-color); font-weight: 700;">Pipeline Running ⚡</span><br>
+                    <p style="margin-top:4px; font-size:11px; color: var(--text-muted);">${data.message}</p>
+                `;
+                
+                // Monitor status after 5s
+                setTimeout(fetchAdminStats, 5000);
+
+            } catch (err) {
+                console.error(err);
+                statusBox.innerHTML = `<span style="color: var(--spam-color);">Error: ${err.message}</span>`;
+            } finally {
+                spinner.style.display = 'none';
+                btnText.textContent = 'Retrain Production Models 🚀';
+                btn.disabled = false;
+            }
+        }
+
+        // Fetch feedback statistics and recent entries
+        async function fetchAdminStats() {
+            const apiKey = document.getElementById('api-key-input').value.trim();
+            const totalEl = document.getElementById('admin-total-reports');
+            const spamEl = document.getElementById('admin-spam-reports');
+            const hamEl = document.getElementById('admin-ham-reports');
+            const listEl = document.getElementById('admin-reports-list');
+
+            try {
+                const response = await fetch('/feedback-stats?api_key=' + encodeURIComponent(apiKey));
+                if (!response.ok) return;
+
+                const data = await response.json();
+                totalEl.textContent = data.total_reports;
+                spamEl.textContent = data.spam_count;
+                hamEl.textContent = data.ham_count;
+
+                if (data.reports.length === 0) {
+                    listEl.innerHTML = `<i style="color: var(--text-muted)">No corrections submitted yet.</i>`;
+                } else {
+                    let html = '';
+                    data.reports.slice(0, 10).forEach(rep => {
+                        const lblClass = rep.reported_label === 'spam' ? 'spam' : 'ham';
+                        html += `
+                            <div style="background: rgba(255,255,255,0.01); border: 1px solid var(--border-color); padding: 6px; border-radius: 4px; display: flex; flex-direction: column; gap: 2px;">
+                                <div style="display:flex; justify-content:space-between; font-size:9px;">
+                                    <span class="explanation-val ${lblClass}" style="width:auto; padding: 2px 4px; font-size:8px;">${rep.reported_label.toUpperCase()}</span>
+                                </div>
+                                <div style="font-family: monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${rep.message}</div>
+                            </div>
+                        `;
+                    });
+                    listEl.innerHTML = html;
+                }
+            } catch (err) {
+                console.error("Failed to load stats", err);
+            }
+        }
+
+        // Auto fetch stats when tab changes to admin
+        const originalSwitchTab = switchTab;
+        switchTab = function(tabId) {
+            originalSwitchTab(tabId);
+            if (tabId === 'admin-mode') {
+                fetchAdminStats();
+            }
+        };
     </script>
 </body>
 </html>

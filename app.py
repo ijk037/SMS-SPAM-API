@@ -7,6 +7,7 @@ import csv
 import time
 from collections import defaultdict
 import json
+import scipy.sparse as sp
 
 from nltk.corpus import stopwords
 from nltk.stem import PorterStemmer
@@ -38,8 +39,8 @@ def check_rate_limit(ip_address, limit=10, period=60):
 
 @app.before_request
 def enforce_security():
-    # Only protect API endpoints (predict, feedback, model-metadata)
-    if request.path in ["/predict", "/feedback", "/model-metadata"]:
+    # Only protect API endpoints (predict, feedback, model-metadata, feedback-stats, retrain)
+    if request.path in ["/predict", "/feedback", "/model-metadata", "/feedback-stats", "/retrain"]:
         # 1. Rate Limiting
         # Extract client IP supporting proxy headers
         ip = request.headers.get("X-Forwarded-For", request.remote_addr or "127.0.0.1").split(",")[0].strip()
@@ -210,8 +211,33 @@ def get_cached_assets(version_name):
     model_cache[version_name] = (m, v, e)
     return m, v, e
 
+def normalize_obfuscation(text):
+    text = text.lower()
+    # Replace common spammer characters
+    replacements = {
+        '@': 'a', '0': 'o', '1': 'i', '3': 'e', '4': 'a', '5': 's', '8': 'b', 
+        '|': 'i', '$': 's', '£': 'l', '€': 'e', '¥': 'y', '!': 'i'
+    }
+    for char, replacement in replacements.items():
+        text = text.replace(char, replacement)
+        
+    # Join spaced-out single letters commonly found in spam (e.g. "u r g e n t" -> "urgent")
+    text = re.sub(r'\b([a-z])(?:\s+([a-z]))+\b', lambda m: m.group(0).replace(" ", ""), text)
+    return text
+
+def extract_meta_features(text_list):
+    meta = []
+    for text in text_list:
+        length = len(text)
+        cap_ratio = sum(1 for c in text if c.isupper()) / (length + 1)
+        digit_count = sum(1 for c in text if c.isdigit())
+        num_special = sum(1 for c in text if not c.isalnum() and not c.isspace())
+        meta.append([length, cap_ratio, digit_count, num_special])
+        
+    return sp.csr_matrix(meta)
+
 def preprocess_v1(text):
-    text   = text.lower()
+    text   = normalize_obfuscation(text)
     text   = re.sub(r"[^a-z\s]", "", text)
     tokens = word_tokenize(text)
     tokens = [w for w in tokens if w not in stop_words and len(w) > 1]
@@ -221,7 +247,7 @@ def preprocess_v1(text):
 def preprocess_v2(text):
     if not isinstance(text, str):
         return ""
-    text = text.lower()
+    text = normalize_obfuscation(text)
     text = re.sub(r'https?://\S+|www\.\S+', ' __url__ ', text)
     text = re.sub(r'\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b', ' __email__ ', text)
     text = re.sub(r'\b(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b', ' __phone__ ', text)
@@ -294,6 +320,10 @@ def model_metadata():
     num_features = len(req_vectorizer.get_feature_names_out()) if hasattr(req_vectorizer, 'get_feature_names_out') else len(req_vectorizer.vocabulary_)
     has_v2_features = hasattr(req_vectorizer, 'vocabulary_') and any(term in req_vectorizer.vocabulary_ for term in ["__url__", "__phone__"])
     
+    # Check if this loaded model supports metadata features
+    expected_features = getattr(req_model, "n_features_in_", None)
+    supports_meta = expected_features is not None and expected_features > num_features
+
     return jsonify({
         "active_version": version_used,
         "model_type": type(req_model).__name__,
@@ -305,7 +335,8 @@ def model_metadata():
             "phone_handling": has_v2_features,
             "money_handling": has_v2_features,
             "email_handling": has_v2_features,
-            "promo_code_handling": has_v2_features
+            "promo_code_handling": has_v2_features,
+            "metadata_features_v2": supports_meta
         }
     })
 
@@ -387,6 +418,16 @@ def predict():
 
     processed  = preprocess(message, req_vectorizer)
     vector     = req_vectorizer.transform([processed])
+    
+    # Check if model requires metadata features
+    expected_features = getattr(req_model, "n_features_in_", None)
+    num_vocab_features = vector.shape[1]
+    
+    if expected_features is not None and expected_features > num_vocab_features:
+        # Extract and append metadata features
+        meta = extract_meta_features([message])
+        vector = sp.hstack([vector, meta])
+
     prediction = req_model.predict(vector)
     proba      = req_model.predict_proba(vector)[0]
     label      = req_encoder.inverse_transform(prediction)[0]
@@ -405,6 +446,12 @@ def predict():
             for w in words:
                 modified_processed = " ".join([word for word in processed.split() if word != w])
                 mod_vector = req_vectorizer.transform([modified_processed])
+                
+                # Check if model requires metadata features during explanation
+                if expected_features is not None and expected_features > num_vocab_features:
+                    mod_meta = extract_meta_features([message])
+                    mod_vector = sp.hstack([mod_vector, mod_meta])
+                    
                 mod_proba = req_model.predict_proba(mod_vector)[0]
                 mod_prob_spam = mod_proba[spam_index]
                 diff = orig_prob_spam - mod_prob_spam
@@ -454,6 +501,80 @@ def feedback():
     return jsonify({
         "status": "success",
         "message": "Feedback saved successfully"
+    })
+
+@app.route("/feedback-stats", methods=["GET"])
+def feedback_stats():
+    feedback_file = os.path.join("data", "feedback.tsv")
+    reports = []
+    spam_count = 0
+    ham_count = 0
+    
+    if os.path.exists(feedback_file):
+        try:
+            with open(feedback_file, "r", encoding="utf-8") as f:
+                reader = csv.reader(f, delimiter="\t")
+                for row in reader:
+                    if len(row) >= 2:
+                        label = row[0].strip().lower()
+                        msg = row[1].strip()
+                        reports.append({"reported_label": label, "message": msg})
+                        if label == "spam":
+                            spam_count += 1
+                        elif label == "ham":
+                            ham_count += 1
+        except Exception as e:
+            return jsonify({"error": f"Failed to load stats: {str(e)}"}), 500
+            
+    # Return in reverse chronological order
+    reports.reverse()
+    
+    return jsonify({
+        "total_reports": len(reports),
+        "spam_count": spam_count,
+        "ham_count": ham_count,
+        "reports": reports
+    })
+
+import threading
+@app.route("/retrain", methods=["POST"])
+def retrain():
+    def run_retrain():
+        try:
+            print("Starting background retraining pipeline...")
+            import train
+            import importlib
+            importlib.reload(train)
+            
+            # Execute train main
+            train.main()
+            
+            # Hot swap the loaded models
+            global model, vectorizer, encoder, active_version, model_dir
+            model_dir, active_version = get_model_path_and_version()
+            # Clear caches
+            model_cache.clear()
+            
+            if active_version != "v3":
+                def load_asset_internal(filename):
+                    path = os.path.join(model_dir, filename) if model_dir else filename
+                    if os.path.exists(path):
+                        return joblib.load(path)
+                    if os.path.exists(filename):
+                        return joblib.load(filename)
+                    raise FileNotFoundError(f"Model asset {filename} not found.")
+                model = load_asset_internal("spam_model.pkl")
+                vectorizer = load_asset_internal("tfidf.pkl")
+                encoder = load_asset_internal("label_encoder.pkl")
+                model_cache[active_version] = (model, vectorizer, encoder)
+            print("Background retraining pipeline completed successfully!")
+        except Exception as e:
+            print(f"Error during background retraining: {e}")
+            
+    threading.Thread(target=run_retrain).start()
+    return jsonify({
+        "status": "success", 
+        "message": "Retraining pipeline triggered asynchronously. Checking data/feedback.tsv, updating weights, and hot-swapping models."
     })
 
 if __name__ == "__main__":
